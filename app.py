@@ -1,10 +1,11 @@
 """
 app.py  –  Combined Current Analyser
 ======================================
-Two machines, same pipeline, one app.
+Three machines, same pipeline, one app.
 
   Machine 1 : Wave Soldering Furnace   (wave_soldering/)
   Machine 2 : MV Conveyer              (mv_conveyer/)
+  Machine 3 : EPSON Robot              (robo/)
 
 Each machine has its own Page 1 (Validation) and Page 2 (RAG Visualisation).
 Select the machine in the sidebar; all state is kept separately per machine.
@@ -54,6 +55,22 @@ from mv_conveyer.rag_classifier        import (
     DEFAULT_THRESHOLDS as MVC_RAG_DEFAULTS,
 )
 from mv_conveyer.state_manager         import StateManager as mvc_StateManager
+
+# ── EPSON Robot imports ────────────────────────────────────────────────────────
+from robo.data_loader                  import load_data as robo_load_data, get_sample_rate as robo_sample_rate
+from robo.windowing                    import generate_windows as robo_gen_windows
+from robo.fft_analysis                 import compute_window_fft as robo_fft_win, batch_compute_fft as robo_batch_fft
+from robo.validation                   import validate_window as robo_val_win, validate_dataset as robo_val_ds
+from robo.validation                   import DEFAULT_THRESHOLDS as ROBO_VAL_DEFAULTS
+from robo.feature_engineering          import compute_features as robo_feat, features_to_dict as robo_feat_dict
+from robo.rag_classifier               import (
+    classify as robo_classify,
+    STATE_COLORS as ROBO_STATE_COLORS,
+    STATE_LABELS as ROBO_STATE_LABELS,
+    DEFAULT_THRESHOLDS as ROBO_RAG_DEFAULTS,
+)
+from robo.state_manager                import StateManager as robo_StateManager
+from robo.ml.ui                        import render_ml_page as render_robo_ml_page
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -160,6 +177,27 @@ MACHINE_META = {
         "state_colors" : MVC_STATE_COLORS,
         "state_labels" : MVC_STATE_LABELS,
     },
+    "robo": {
+        "label"        : "EPSON Robot",
+        "icon"         : "🤖",
+        "badge_color"  : "#8e44ad",
+        "default_ws"   : 30,
+        "load_data"    : robo_load_data,
+        "sample_rate"  : robo_sample_rate,
+        "gen_windows"  : robo_gen_windows,
+        "fft_win"      : robo_fft_win,
+        "batch_fft"    : robo_batch_fft,
+        "val_win"      : robo_val_win,
+        "val_ds"       : robo_val_ds,
+        "feat"         : robo_feat,
+        "feat_dict"    : robo_feat_dict,
+        "classify"     : robo_classify,
+        "StateManager" : robo_StateManager,
+        "val_defaults" : ROBO_VAL_DEFAULTS,
+        "rag_defaults" : ROBO_RAG_DEFAULTS,
+        "state_colors" : ROBO_STATE_COLORS,
+        "state_labels" : ROBO_STATE_LABELS,
+    },
 }
 
 PHASE_COLORS = dict(i1="#4e9af1", i2="#f1914e", i3="#4ef19a", i_avg="#f1f14e")
@@ -201,6 +239,17 @@ _ss_init(
         val_thr=dict(MVC_VAL_DEFAULTS),
         last_file=None,
     ),
+    robo = dict(
+        df=None, windows_proc=None, fft_cache=None,
+        val_results=None, dataset_val=None,
+        features_cache=None, raw_states=None,
+        smoothed_states=None, win_centres=None,
+        playing=False, play_idx=0,
+        window_size_sec=30,
+        rag_thr=dict(ROBO_RAG_DEFAULTS),
+        val_thr=dict(ROBO_VAL_DEFAULTS),
+        last_file=None,
+    ),
 )
 
 
@@ -234,9 +283,9 @@ def render_sidebar():
     st.sidebar.markdown('<div class="section-label">Machine</div>', unsafe_allow_html=True)
     machine_choice = st.sidebar.radio(
         "Machine",
-        options=["furnace", "conveyer"],
+        options=["furnace", "conveyer", "robo"],
         format_func=lambda m: f"{meta[m]['icon']}  {meta[m]['label']}",
-        index=0 if st.session_state.current_machine == "furnace" else 1,
+        index=["furnace", "conveyer", "robo"].index(st.session_state.current_machine),
         label_visibility="collapsed",
     )
     if machine_choice != st.session_state.current_machine:
@@ -297,7 +346,8 @@ def render_sidebar():
     rt["red_max_rms"]      = st.sidebar.number_input("RED max RMS (A)",   0.01, 10.0, float(rt["red_max_rms"]),   0.05, key=f"{m}_rmr")
     rt["green_min_rms"]    = st.sidebar.number_input("GREEN min RMS (A)", 0.01, 30.0, float(rt["green_min_rms"]), 0.05, key=f"{m}_gmr")
     rt["green_min_thd"]    = st.sidebar.number_input("GREEN min THD",     0.01, 1.0,  float(rt["green_min_thd"]), 0.01, key=f"{m}_gmt")
-    rt["green_min_imbalance"] = st.sidebar.number_input("GREEN min imbalance", 0.01, 2.0, float(rt["green_min_imbalance"]), 0.01, key=f"{m}_gmi")
+    if "green_min_imbalance" in rt:
+        rt["green_min_imbalance"] = st.sidebar.number_input("GREEN min imbalance", 0.01, 2.0, float(rt["green_min_imbalance"]), 0.01, key=f"{m}_gmi")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1063,7 +1113,7 @@ def page_rag():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def page_ml():
-    """ML Diagnostics page — routes to furnace or conveyer ML based on machine."""
+    """ML Diagnostics page — routes to furnace, conveyer, or robo ML based on machine."""
     m = st.session_state.current_machine
 
     if m == "conveyer":
@@ -1081,6 +1131,19 @@ def page_ml():
         df_cyclic = ss("df_cyclic")
         # Pass combined df (for lookback context) + cyclic df (labels/training target)
         render_mvc_ml_page(df, cyclic_df=df_cyclic)
+    elif m == "robo":
+        _machine_header("robo")
+        df = ss("df")
+        if df is None:
+            st.warning(
+                "No data loaded yet. Go to **Data Validation** first, "
+                "upload the robot CSV, then return here."
+            )
+            if st.button("← Go to Data Validation"):
+                st.session_state.current_page = "validation"
+                st.rerun()
+            return
+        render_robo_ml_page(df)
     else:
         _machine_header("furnace")
         df = ss("df")
