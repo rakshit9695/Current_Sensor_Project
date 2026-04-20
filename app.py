@@ -69,21 +69,45 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+/* ── Global ─────────────────────────────────────────────── */
+section[data-testid="stSidebar"] { background: #0e1117; }
+h1, h2, h3 { letter-spacing: -0.02em; }
+hr { border-color: rgba(255,255,255,0.06); }
+
+/* ── State indicator ────────────────────────────────────── */
 .state-circle {
-    width:130px; height:130px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:1rem; font-weight:bold; color:white;
-    margin:auto; transition:all 0.3s ease;
+    width: 90px; height: 90px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 600; color: white;
+    margin: 0 auto 6px auto; transition: all 0.3s ease;
+    letter-spacing: 0.04em; text-transform: uppercase;
 }
+
+/* ── Metric card ────────────────────────────────────────── */
 .metric-box {
-    background:#1e1e2e; border-radius:10px; padding:10px 14px;
-    text-align:center; margin:3px;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px; padding: 12px 14px;
+    text-align: center; margin: 4px 0;
 }
-.metric-label { font-size:0.72rem; color:#aaa; text-transform:uppercase; }
-.metric-value { font-size:1.4rem; font-weight:bold; color:#fff; }
+.metric-label {
+    font-size: 0.65rem; color: rgba(255,255,255,0.45);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px;
+}
+.metric-value { font-size: 1.25rem; font-weight: 600; color: #f0f0f0; }
+
+/* ── Machine badge ──────────────────────────────────────── */
 .machine-badge {
-    display:inline-block; padding:4px 12px; border-radius:20px;
-    font-size:0.8rem; font-weight:bold; margin-bottom:8px;
+    display: inline-block; padding: 4px 14px; border-radius: 6px;
+    font-size: 0.7rem; font-weight: 600; margin-bottom: 4px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+}
+
+/* ── Section divider ────────────────────────────────────── */
+.section-label {
+    font-size: 0.65rem; color: rgba(255,255,255,0.35);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 8px; padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -204,11 +228,10 @@ def ss_invalidate():
 def render_sidebar():
     meta = MACHINE_META
 
-    st.sidebar.title("⚡ Current Analyser")
-    st.sidebar.markdown("---")
+    st.sidebar.markdown("#### ⚡ Current Analyser")
 
     # ── Machine selector ───────────────────────────────────────────────
-    st.sidebar.subheader("🏭 Select Machine")
+    st.sidebar.markdown('<div class="section-label">Machine</div>', unsafe_allow_html=True)
     machine_choice = st.sidebar.radio(
         "Machine",
         options=["furnace", "conveyer"],
@@ -220,21 +243,18 @@ def render_sidebar():
         st.session_state.current_machine = machine_choice
         st.rerun()
 
-    st.sidebar.markdown("---")
-
     # ── Page selector ─────────────────────────────────────────────────
-    st.sidebar.subheader("📄 Page")
+    st.sidebar.markdown('<div class="section-label">Page</div>', unsafe_allow_html=True)
     m = st.session_state.current_machine
     page_options = ["validation", "rag", "ml"]
 
     def _page_label(p):
         return {
-            "validation": "📋  Data Validation",
-            "rag":        "🚦  RAG Visualisation",
+            "validation": "📋  Validation",
+            "rag":        "🚦  RAG Analysis",
             "ml":         "🤖  ML Diagnostics",
         }[p]
 
-    # Clamp current page if machine switched away from furnace
     if st.session_state.current_page not in page_options:
         st.session_state.current_page = "validation"
 
@@ -252,22 +272,19 @@ def render_sidebar():
     m = st.session_state.current_machine
 
     # ── Window size ───────────────────────────────────────────────────
-    # Conveyer cycle: ~11s ON + ~4s OFF = ~15s period.
-    # Window must be < 4s to sit inside a single IDLE gap without averaging it away.
-    # Furnace state changes happen over minutes — larger windows are appropriate.
-    st.sidebar.subheader("⚙️ Window Settings")
+    st.sidebar.markdown('<div class="section-label">Window Settings</div>', unsafe_allow_html=True)
     cur_ws = ss("window_size_sec")
     if m == "conveyer":
-        new_ws = st.sidebar.slider("Window size (seconds)", 2, 10, int(min(cur_ws, 10)), 1)
+        new_ws = st.sidebar.slider("Window (s)", 2, 10, int(min(cur_ws, 10)), 1)
     else:
-        new_ws = st.sidebar.slider("Window size (seconds)", 10, 120, int(max(cur_ws, 10)), 10)
+        new_ws = st.sidebar.slider("Window (s)", 10, 120, int(max(cur_ws, 10)), 10)
     if new_ws != cur_ws:
         ss_set("window_size_sec", new_ws)
         ss_invalidate()
 
     # ── Validation thresholds ──────────────────────────────────────────
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 Validation Thresholds")
+    st.sidebar.markdown('<div class="section-label">Validation Thresholds</div>', unsafe_allow_html=True)
     vt = ss("val_thr")
     vt["freq_tolerance_hz"]     = st.sidebar.number_input("Freq tolerance (Hz)",      0.1, 2.0, float(vt["freq_tolerance_hz"]),     0.1,  key=f"{m}_ft")
     vt["max_phase_imbalance"]   = st.sidebar.number_input("Max phase imbalance (CV)", 0.1, 3.0, float(vt["max_phase_imbalance"]),   0.05, key=f"{m}_pi")
@@ -275,7 +292,7 @@ def render_sidebar():
 
     # ── RAG thresholds ────────────────────────────────────────────────
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🎚️ RAG Thresholds")
+    st.sidebar.markdown('<div class="section-label">RAG Thresholds</div>', unsafe_allow_html=True)
     rt = ss("rag_thr")
     rt["red_max_rms"]      = st.sidebar.number_input("RED max RMS (A)",   0.01, 10.0, float(rt["red_max_rms"]),   0.05, key=f"{m}_rmr")
     rt["green_min_rms"]    = st.sidebar.number_input("GREEN min RMS (A)", 0.01, 30.0, float(rt["green_min_rms"]), 0.05, key=f"{m}_gmr")
@@ -337,7 +354,7 @@ def run_pipeline(df: pd.DataFrame):
 
 def fig_time_series(df, highlight_start=None, highlight_end=None):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                        subplot_titles=("Phase Currents  I1 / I2 / I3", "Average Current  I_avg"),
+                        subplot_titles=("Phase Currents  I1 · I2 · I3", "Average Current  I_avg"),
                         vertical_spacing=0.10)
     t = df["timestamp"]
     for col, color in [("i1", PHASE_COLORS["i1"]), ("i2", PHASE_COLORS["i2"]), ("i3", PHASE_COLORS["i3"])]:
@@ -350,10 +367,12 @@ def fig_time_series(df, highlight_start=None, highlight_end=None):
     if highlight_start and highlight_end:
         for row in (1, 2):
             fig.add_vrect(x0=highlight_start, x1=highlight_end,
-                          fillcolor="rgba(255,255,0,0.12)", line_width=0, row=row, col=1)
-    fig.update_layout(height=420, template="plotly_dark", showlegend=True,
-                      margin=dict(l=40, r=20, t=40, b=30),
-                      legend=dict(orientation="h", y=-0.12))
+                          fillcolor="rgba(255,255,255,0.06)", line_width=0, row=row, col=1)
+    fig.update_layout(height=380, template="plotly_dark", showlegend=True,
+                      margin=dict(l=40, r=20, t=36, b=24),
+                      legend=dict(orientation="h", y=-0.14, font=dict(size=10)),
+                      font=dict(size=11), plot_bgcolor="rgba(0,0,0,0)",
+                      paper_bgcolor="rgba(0,0,0,0)")
     fig.update_yaxes(title_text="Current (A)", row=1, col=1)
     fig.update_yaxes(title_text="Current (A)", row=2, col=1)
     return fig
@@ -373,12 +392,14 @@ def fig_fft(fft_results, sample_rate=1.0):
         if fund_mhz > 0:
             fig.add_vline(x=fund_mhz, line_dash="dash", line_color=PHASE_COLORS[col],
                           annotation_text=f"{fund_mhz:.0f} mHz", annotation_position="top")
-    fig.update_layout(title="Operational Frequency Spectrum (FFT of RMS time-series)",
+    fig.update_layout(title="Operational Frequency Spectrum",
                       xaxis_title="Frequency (mHz)",
                       yaxis_title="Magnitude (A)",
-                      template="plotly_dark", height=340,
-                      margin=dict(l=40, r=20, t=50, b=40),
-                      legend=dict(orientation="h"))
+                      template="plotly_dark", height=300,
+                      margin=dict(l=40, r=20, t=40, b=36),
+                      legend=dict(orientation="h", font=dict(size=10)),
+                      font=dict(size=11), plot_bgcolor="rgba(0,0,0,0)",
+                      paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 
@@ -388,12 +409,14 @@ def fig_grid_freq(df):
                               mode="lines", line=dict(color="#9b59b6", width=1),
                               name="Grid Freq", hovertemplate="Freq: %{y:.2f} Hz"))
     fig.add_hline(y=50.0, line_dash="dash", line_color="#2ecc71",
-                  annotation_text="50 Hz target")
-    fig.add_hrect(y0=49.5, y1=50.5, fillcolor="rgba(46,204,113,0.08)", line_width=0)
-    fig.update_layout(title="Sensor-Reported Grid Frequency (50 Hz validation)",
+                  annotation_text="50 Hz")
+    fig.add_hrect(y0=49.5, y1=50.5, fillcolor="rgba(46,204,113,0.06)", line_width=0)
+    fig.update_layout(title="Grid Frequency",
                       xaxis_title="Time", yaxis_title="Frequency (Hz)",
-                      template="plotly_dark", height=240,
-                      margin=dict(l=40, r=20, t=50, b=30))
+                      template="plotly_dark", height=200,
+                      margin=dict(l=40, r=20, t=36, b=24),
+                      font=dict(size=11), plot_bgcolor="rgba(0,0,0,0)",
+                      paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 
@@ -403,13 +426,13 @@ def fig_state_timeline(smoothed_states, win_centres, state_colors, state_labels,
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=win_centres, y=nums, mode="markers",
-        marker=dict(color=[state_colors.get(s, "#888") for s in smoothed_states], size=6, symbol="square"),
+        marker=dict(color=[state_colors.get(s, "#888") for s in smoothed_states], size=5, symbol="square"),
         text=[state_labels.get(s, s) for s in smoothed_states],
         hovertemplate="%{text}<extra></extra>",
     ))
     if current_idx is not None and current_idx < len(win_centres):
         fig.add_vline(x=str(win_centres[current_idx]), line_color="white",
-                      line_width=2, line_dash="dot")
+                      line_width=1.5, line_dash="dot")
     fig.update_layout(
         title="State Timeline",
         xaxis_title="Time",
@@ -417,8 +440,10 @@ def fig_state_timeline(smoothed_states, win_centres, state_colors, state_labels,
                    ticktext=["🔴 " + state_labels.get(RED, "Idle"),
                              "🟡 " + state_labels.get(AMBER, "No Load"),
                              "🟢 " + state_labels.get(GREEN, "Load")]),
-        template="plotly_dark", height=180,
-        margin=dict(l=100, r=20, t=40, b=30), showlegend=False,
+        template="plotly_dark", height=160,
+        margin=dict(l=100, r=20, t=36, b=24), showlegend=False,
+        font=dict(size=11), plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
@@ -426,10 +451,14 @@ def fig_state_timeline(smoothed_states, win_centres, state_colors, state_labels,
 def _circle_html(state, active, state_colors, state_labels):
     color = state_colors.get(state, "#888")
     label = state_labels.get(state, state)
-    glow  = f"box-shadow:0 0 40px 15px {color};" if active else ""
-    opac  = "opacity:1.0;" if active else "opacity:0.18;"
+    if active:
+        glow  = f"box-shadow:0 0 24px 8px {color};"
+        opac  = "opacity:1.0;"
+    else:
+        glow  = ""
+        opac  = "opacity:0.15;"
     return (f'<div class="state-circle" style="background:{color};{glow}{opac}">'
-            f'{label}</div><br/>')
+            f'{label}</div>')
 
 
 def _machine_header(m: str):
@@ -440,6 +469,7 @@ def _machine_header(m: str):
         f'{meta["icon"]}  {meta["label"]}</span>',
         unsafe_allow_html=True,
     )
+    st.markdown("")  # spacer
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -450,13 +480,13 @@ def page_validation():
     m    = st.session_state.current_machine
     meta = MACHINE_META[m]
     _machine_header(m)
-    st.title("📋 Data Validation")
+    st.markdown("## Data Validation")
 
     # ── File upload ────────────────────────────────────────────────────
     if m == "conveyer":
-        st.info(
+        st.caption(
             "Upload **both** MV Conveyer CSV files: "
-            "`Stop_and_Run_MV_Conveyer.csv` (reference / lookback context) "
+            "`Stop_and_Run_MV_Conveyer.csv` (reference) "
             "and `Cyclic_Run_MV_Conveyer.csv` (operational data)."
         )
         uploaded_files = st.file_uploader(
@@ -483,7 +513,7 @@ def page_validation():
     else:
         uploaded = st.file_uploader("Upload CSV", type=["csv"])
         if uploaded is None:
-            st.info(f"Upload the {meta['label']} CSV file to begin.")
+            st.caption(f"Upload the {meta['label']} CSV file to begin.")
             return
         if ss("df") is None or ss("last_file") != uploaded.name:
             with st.spinner("Loading data…"):
@@ -504,18 +534,18 @@ def page_validation():
     c4.metric("I_avg range",    f"{df['i_avg'].min():.2f} – {df['i_avg'].max():.2f} A")
 
     # Time range selector
-    st.subheader("Select Time Range")
+    st.markdown('<div class="section-label">Time Range</div>', unsafe_allow_html=True)
     n_hours = max(1, int(len(df) / (sr * 3600)))
     default_h = min(4, n_hours)
     h_range = st.slider("Hours to analyse (from start)", 1, n_hours, default_h)
     df_view = df.iloc[: int(h_range * sr * 3600)]
 
     # Raw time-series
-    st.subheader("Raw Time-Series")
+    st.markdown("#### Phase Currents & Average")
     st.plotly_chart(fig_time_series(df_view), width='stretch')
 
     # Grid frequency
-    st.subheader("Grid Frequency (50 Hz Validation)")
+    st.markdown("#### Grid Frequency")
     st.plotly_chart(fig_grid_freq(df_view), width='stretch')
 
     # For conveyer: RAG pipeline runs on cyclic-only slice, not the combined df
@@ -542,7 +572,7 @@ def page_validation():
     dataset_val  = ss("dataset_val")
 
     st.markdown("---")
-    st.subheader("Validation Metrics")
+    st.markdown("#### Validation Results")
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Total Windows",     f"{dataset_val.total_windows:,}")
     m2.metric("Valid Windows",     f"{dataset_val.valid_windows:,}")
@@ -552,7 +582,7 @@ def page_validation():
 
     # FFT window inspector
     st.markdown("---")
-    st.subheader("FFT Inspector — Select Window")
+    st.markdown("#### FFT Inspector")
 
     # Find the last window with enough samples for a meaningful FFT.
     # A partial trailing window (e.g. 3 samples out of 60) produces a blank chart.
@@ -596,7 +626,7 @@ def page_validation():
 
     # Final verdict
     st.markdown("---")
-    st.subheader("Final Verdict")
+    st.markdown("#### Verdict")
     if dataset_val.is_dataset_valid:
         st.success("✅  **VALID DATA** — sufficient windows pass all quality checks.")
     else:
@@ -665,21 +695,22 @@ def _page_rag_conveyer(df: pd.DataFrame, sc: dict, sl: dict, meta: dict):
     col_lights, col_stats, col_info = st.columns([2, 2, 2])
 
     with col_lights:
-        st.markdown("### Current State")
-        html = ""
+        st.markdown("#### State")
+        html = '<div style="display:flex;gap:12px;justify-content:center;">'
         for state in (GREEN, AMBER, RED):
             html += _circle_html(state, state == cur_state, sc, sl)
+        html += '</div>'
         st.markdown(html, unsafe_allow_html=True)
         st.markdown(
-            f'<div style="text-align:center;font-size:1.2rem;margin-top:8px;">'
+            f'<div style="text-align:center;font-size:1.1rem;margin-top:10px;">'
             f'<b style="color:{sc.get(cur_state,"#fff")};">{sl.get(cur_state, cur_state)}</b>'
-            f' — I_avg = {cur_iavg:.3f} A</div>',
+            f' · {cur_iavg:.3f} A</div>',
             unsafe_allow_html=True,
         )
         st.caption(f"Sample {idx + 1} / {n}  ·  {cur_ts.strftime('%H:%M:%S')}")
 
     with col_stats:
-        st.markdown("### Per-Sample State Counts")
+        st.markdown("#### State Distribution")
         counts = {RED:   int((states_arr == RED).sum()),
                   AMBER: int((states_arr == AMBER).sum()),
                   GREEN: int((states_arr == GREEN).sum())}
@@ -689,16 +720,15 @@ def _page_rag_conveyer(df: pd.DataFrame, sc: dict, sl: dict, meta: dict):
         st.metric(f"🟢 {sl.get(GREEN,'RUNNING')}",  f"{counts[GREEN]:,}", f"{counts[GREEN]/tot*100:.1f}%")
 
     with col_info:
-        st.markdown("### Thresholds in Use")
-        st.markdown(f"- **HALT (RED):** I_avg < **{thr['red_max_rms']:.2f} A**")
-        st.markdown(f"- **IDLE (AMBER):** {thr['red_max_rms']:.2f} – {thr['green_min_rms']:.2f} A")
-        st.markdown(f"- **RUNNING (GREEN):** I_avg ≥ **{thr['green_min_rms']:.2f} A**")
-        st.markdown(f"- **Total samples:** {n:,}")
-        st.caption("Classification is per 1-second sample — no window averaging.")
+        st.markdown("#### Thresholds")
+        st.markdown(f"**HALT:** I_avg < {thr['red_max_rms']:.2f} A")
+        st.markdown(f"**IDLE:** {thr['red_max_rms']:.2f} – {thr['green_min_rms']:.2f} A")
+        st.markdown(f"**RUNNING:** I_avg ≥ {thr['green_min_rms']:.2f} A")
+        st.caption(f"{n:,} samples · per-sample classification")
 
     # ── Live cycle view (±60 s centred on current sample) ─────────────
     st.markdown("---")
-    st.markdown("### Live View — Cycle Detail (±60 s around current position)")
+    st.markdown("#### Cycle Detail — ±60 s")
 
     ctx_sec  = 60
     t_start  = cur_ts - pd.Timedelta(seconds=ctx_sec)
@@ -762,9 +792,11 @@ def _page_rag_conveyer(df: pd.DataFrame, sc: dict, sl: dict, meta: dict):
     fig.add_vline(x=cur_ts, line_dash="dot", line_color="white", line_width=2.0)
 
     fig.update_layout(
-        height=580, template="plotly_dark", showlegend=True,
-        margin=dict(l=50, r=20, t=60, b=30),
-        legend=dict(orientation="h", y=-0.06),
+        height=520, template="plotly_dark", showlegend=True,
+        margin=dict(l=50, r=20, t=50, b=24),
+        legend=dict(orientation="h", y=-0.06, font=dict(size=10)),
+        font=dict(size=11), plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
     )
     fig.update_yaxes(title_text="Current (A)", row=1, col=1)
     fig.update_yaxes(title_text="I_avg (A)",   row=2, col=1)
@@ -774,7 +806,7 @@ def _page_rag_conveyer(df: pd.DataFrame, sc: dict, sl: dict, meta: dict):
 
     # ── Full-dataset state overview (with current-position marker) ─────
     st.markdown("---")
-    st.markdown("### Full Dataset — State Overview")
+    st.markdown("#### Full Dataset Overview")
 
     step      = max(1, n // 2000)
     t_ds      = df["timestamp"].iloc[::step].to_numpy()
@@ -805,8 +837,10 @@ def _page_rag_conveyer(df: pd.DataFrame, sc: dict, sl: dict, meta: dict):
     fig_ov.add_vline(x=cur_ts, line_dash="dot", line_color="white", line_width=2.0)
 
     fig_ov.update_layout(
-        height=380, template="plotly_dark", showlegend=False,
-        margin=dict(l=50, r=20, t=50, b=30),
+        height=340, template="plotly_dark", showlegend=False,
+        margin=dict(l=50, r=20, t=40, b=24),
+        font=dict(size=11), plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
     )
     fig_ov.update_yaxes(title_text="I_avg (A)", row=1, col=1)
     fig_ov.update_yaxes(title_text="State", row=2, col=1,
@@ -851,7 +885,7 @@ def page_rag():
     sl   = meta["state_labels"]
 
     _machine_header(m)
-    st.title("🚦 RAG State Visualisation")
+    st.markdown("## RAG State Analysis")
 
     # ── Conveyer: per-sample classification (no window pipeline needed) ──
     # The conveyer cycle is ~15s (11s ON + 4s OFF). Any window > ~3s
@@ -925,19 +959,20 @@ def page_rag():
     col_lights, col_feat, col_info = st.columns([2, 2, 2])
 
     with col_lights:
-        st.markdown("### Current State")
-        html = ""
+        st.markdown("#### State")
+        html = '<div style="display:flex;gap:12px;justify-content:center;">'
         for state in (GREEN, AMBER, RED):
             html += _circle_html(state, state == cur_state, sc, sl)
+        html += '</div>'
         st.markdown(html, unsafe_allow_html=True)
         st.markdown(
-            f'<div style="text-align:center;font-size:1.2rem;margin-top:8px;">'
+            f'<div style="text-align:center;font-size:1.1rem;margin-top:10px;">'
             f'<b style="color:{sc.get(cur_state,"#fff")};">{sl.get(cur_state, cur_state)}</b>'
             f'</div>', unsafe_allow_html=True,
         )
 
     with col_feat:
-        st.markdown("### Feature Panel")
+        st.markdown("#### Features")
         fd = meta["feat_dict"](cur_features)
 
         def _mb(label, value, unit=""):
@@ -961,9 +996,9 @@ def page_rag():
         )
 
     with col_info:
-        st.markdown("### Window Status")
-        badge = "✅  VALID" if cur_val.is_valid else "❌  INVALID"
-        st.markdown(f'<div style="font-size:2rem;text-align:center;">{badge}</div>',
+        st.markdown("#### Window")
+        badge = "✅ VALID" if cur_val.is_valid else "❌ INVALID"
+        st.markdown(f'<div style="font-size:1.6rem;text-align:center;">{badge}</div>',
                     unsafe_allow_html=True)
         st.markdown(f"**Window:** {idx + 1} / {n_windows}")
         st.markdown(f"**Start:** {cur_window.start_time.strftime('%H:%M:%S')}")
@@ -980,7 +1015,7 @@ def page_rag():
     st.markdown("---")
     col_ts, col_fft_panel = st.columns([3, 2])
     with col_ts:
-        st.markdown("### Live Time-Series (current window highlighted)")
+        st.markdown("#### Time-Series")
         ctx_sec = ss("window_size_sec") * 3
         df_zoom = df[(df["timestamp"] >= cur_window.start_time - pd.Timedelta(seconds=ctx_sec)) &
                      (df["timestamp"] <= cur_window.end_time   + pd.Timedelta(seconds=ctx_sec))]
@@ -989,7 +1024,7 @@ def page_rag():
             width='stretch',
         )
     with col_fft_panel:
-        st.markdown("### Operational Frequency Spectrum")
+        st.markdown("#### FFT Spectrum")
         st.plotly_chart(
             fig_fft(cur_fft, sample_rate=meta["sample_rate"](df)),
             width='stretch',
@@ -997,7 +1032,7 @@ def page_rag():
 
     # ── Row 3: State timeline + summary ───────────────────────────────
     st.markdown("---")
-    st.markdown("### State Timeline")
+    st.markdown("#### Timeline")
     st.plotly_chart(
         fig_state_timeline(smoothed_states, win_centres, sc, sl, current_idx=idx),
         width='stretch',
