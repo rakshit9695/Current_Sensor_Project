@@ -72,6 +72,27 @@ from robo.rag_classifier               import (
 from robo.state_manager                import StateManager as robo_StateManager
 from robo.ml.ui                        import render_ml_page as render_robo_ml_page
 
+# ── Milling Machine imports ────────────────────────────────────────────────────
+from milling.data_loader               import load_data as mill_load_data, get_sample_rate as mill_sample_rate
+from milling.windowing                 import generate_windows as mill_gen_windows
+from milling.fft_analysis              import compute_window_fft as mill_fft_win, batch_compute_fft as mill_batch_fft
+from milling.validation               import validate_window as mill_val_win, validate_dataset as mill_val_ds
+from milling.validation               import DEFAULT_THRESHOLDS as MILL_VAL_DEFAULTS
+from milling.feature_engineering       import compute_features as mill_feat, features_to_dict as mill_feat_dict
+from milling.rag_classifier            import (
+    classify as mill_classify,
+    STATE_COLORS as MILL_STATE_COLORS,
+    STATE_LABELS as MILL_STATE_LABELS,
+    DEFAULT_THRESHOLDS as MILL_RAG_DEFAULTS,
+)
+from milling.state_manager             import StateManager as mill_StateManager
+from milling.ml.ui                     import render_ml_page as render_mill_ml_page
+
+from pathlib import Path
+
+# Bundled data lives under <repo>/data ; each machine auto-loads its own file(s).
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Page config
@@ -140,6 +161,7 @@ MACHINE_META = {
         "icon"         : "🔥",
         "badge_color"  : "#e67e22",
         "default_ws"   : 60,
+        "data_files"   : [DATA_DIR / "Current Data Final - Soldering Furnace - Sheet1.csv"],
         "load_data"    : ws_load_data,
         "sample_rate"  : ws_sample_rate,
         "gen_windows"  : ws_gen_windows,
@@ -161,6 +183,11 @@ MACHINE_META = {
         "icon"         : "🏭",
         "badge_color"  : "#2980b9",
         "default_ws"   : 3,
+        "data_files"   : [
+            DATA_DIR / "mv_conveyor_updated_data" / "Stop_and_Run_MV_Conveyer.csv",
+            DATA_DIR / "mv_conveyor_updated_data" / "Cyclic_Run_MV_Conveyer.csv",
+        ],
+        "cyclic_file"  : DATA_DIR / "mv_conveyor_updated_data" / "Cyclic_Run_MV_Conveyer.csv",
         "load_data"    : mvc_load_data,
         "sample_rate"  : mvc_sample_rate,
         "gen_windows"  : mvc_gen_windows,
@@ -182,6 +209,7 @@ MACHINE_META = {
         "icon"         : "🤖",
         "badge_color"  : "#8e44ad",
         "default_ws"   : 30,
+        "data_files"   : [DATA_DIR / "robo" / "selec_em4m_datalog_robo_20260416.csv"],
         "load_data"    : robo_load_data,
         "sample_rate"  : robo_sample_rate,
         "gen_windows"  : robo_gen_windows,
@@ -197,6 +225,28 @@ MACHINE_META = {
         "rag_defaults" : ROBO_RAG_DEFAULTS,
         "state_colors" : ROBO_STATE_COLORS,
         "state_labels" : ROBO_STATE_LABELS,
+    },
+    "milling": {
+        "label"        : "Milling Machine",
+        "icon"         : "🛠️",
+        "badge_color"  : "#16a085",
+        "default_ws"   : 20,
+        "data_files"   : [DATA_DIR / "milling_machine" / "selec_em4m_datalog (1).csv"],
+        "load_data"    : mill_load_data,
+        "sample_rate"  : mill_sample_rate,
+        "gen_windows"  : mill_gen_windows,
+        "fft_win"      : mill_fft_win,
+        "batch_fft"    : mill_batch_fft,
+        "val_win"      : mill_val_win,
+        "val_ds"       : mill_val_ds,
+        "feat"         : mill_feat,
+        "feat_dict"    : mill_feat_dict,
+        "classify"     : mill_classify,
+        "StateManager" : mill_StateManager,
+        "val_defaults" : MILL_VAL_DEFAULTS,
+        "rag_defaults" : MILL_RAG_DEFAULTS,
+        "state_colors" : MILL_STATE_COLORS,
+        "state_labels" : MILL_STATE_LABELS,
     },
 }
 
@@ -226,7 +276,7 @@ _ss_init(
         window_size_sec=60,
         rag_thr=dict(WS_RAG_DEFAULTS),
         val_thr=dict(WS_VAL_DEFAULTS),
-        last_file=None,
+        last_file=None, last_rag_sig=None,
     ),
     conveyer = dict(
         df=None, df_cyclic=None, windows_proc=None, fft_cache=None,
@@ -237,7 +287,7 @@ _ss_init(
         window_size_sec=3,
         rag_thr=dict(MVC_RAG_DEFAULTS),
         val_thr=dict(MVC_VAL_DEFAULTS),
-        last_file=None,
+        last_file=None, last_rag_sig=None,
     ),
     robo = dict(
         df=None, windows_proc=None, fft_cache=None,
@@ -248,7 +298,18 @@ _ss_init(
         window_size_sec=30,
         rag_thr=dict(ROBO_RAG_DEFAULTS),
         val_thr=dict(ROBO_VAL_DEFAULTS),
-        last_file=None,
+        last_file=None, last_rag_sig=None,
+    ),
+    milling = dict(
+        df=None, windows_proc=None, fft_cache=None,
+        val_results=None, dataset_val=None,
+        features_cache=None, raw_states=None,
+        smoothed_states=None, win_centres=None,
+        playing=False, play_idx=0,
+        window_size_sec=20,
+        rag_thr=dict(MILL_RAG_DEFAULTS),
+        val_thr=dict(MILL_VAL_DEFAULTS),
+        last_file=None, last_rag_sig=None,
     ),
 )
 
@@ -270,6 +331,56 @@ def ss_invalidate():
         ss_set(k, None)
 
 
+def ensure_data_loaded(m: str) -> bool:
+    """
+    Auto-load the active machine's bundled CSV(s) from the data/ directory.
+
+    No file upload required — selecting the machine is enough. Returns True
+    once df (and, for the conveyer, df_cyclic) is available in session state.
+    """
+    meta  = MACHINE_META[m]
+    files = meta["data_files"]
+    key   = "|".join(str(f) for f in files)
+
+    if ss("df") is not None and ss("last_file") == key:
+        return True
+
+    missing = [str(f) for f in files if not Path(f).exists()]
+    if missing:
+        st.error(
+            "Bundled data file(s) not found for **" + meta["label"] + "**:\n\n"
+            + "\n".join(f"- `{p}`" for p in missing)
+        )
+        return False
+
+    with st.spinner(f"Loading {meta['label']} data…"):
+        if m == "conveyer":
+            ss_set("df", meta["load_data"](list(files)))            # combined (context)
+            ss_set("df_cyclic", meta["load_data"](meta["cyclic_file"]))  # cyclic-only
+        else:
+            ss_set("df", meta["load_data"](files[0]))
+    ss_set("last_file", key)
+    ss_invalidate()
+    ss_set("last_rag_sig", None)
+    return True
+
+
+def _default_analysis_view(m: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Default time slice used when a page needs the pipeline but the
+    Validation page hasn't been visited yet (first `default_h` hours)."""
+    meta = MACHINE_META[m]
+    sr   = meta["sample_rate"](df)
+    n_hours   = max(1, int(len(df) / (sr * 3600)))
+    default_h = min(4, n_hours)
+    if m == "conveyer" and ss("df_cyclic") is not None:
+        dfc = ss("df_cyclic")
+        src = meta["sample_rate"](dfc)
+        nh  = max(1, int(len(dfc) / (src * 3600)))
+        h   = min(default_h, nh)
+        return dfc.iloc[: int(h * src * 3600)]
+    return df.iloc[: int(default_h * sr * 3600)]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Sidebar
 # ══════════════════════════════════════════════════════════════════════════════
@@ -283,9 +394,9 @@ def render_sidebar():
     st.sidebar.markdown('<div class="section-label">Machine</div>', unsafe_allow_html=True)
     machine_choice = st.sidebar.radio(
         "Machine",
-        options=["furnace", "conveyer", "robo"],
+        options=["furnace", "conveyer", "robo", "milling"],
         format_func=lambda m: f"{meta[m]['icon']}  {meta[m]['label']}",
-        index=["furnace", "conveyer", "robo"].index(st.session_state.current_machine),
+        index=["furnace", "conveyer", "robo", "milling"].index(st.session_state.current_machine),
         label_visibility="collapsed",
     )
     if machine_choice != st.session_state.current_machine:
@@ -471,21 +582,49 @@ def fig_grid_freq(df):
 
 
 def fig_state_timeline(smoothed_states, win_centres, state_colors, state_labels, current_idx=None):
+    # Plot against window *sequence* (not wall-clock) so the timeline is one
+    # continuous strip. Datasets with long off-periods between sessions (e.g.
+    # the milling machine, logged over many days) would otherwise show large
+    # empty gaps where the machine was simply idle. Real timestamps are kept
+    # as axis ticks and in the hover tooltip.
     state_num = {RED: 0, AMBER: 1, GREEN: 2}
     nums = [state_num.get(s, 1) for s in smoothed_states]
+    n    = len(nums)
+    x    = list(range(n))
+
+    def _fmt(t):
+        try:
+            return pd.Timestamp(t).strftime("%b %d  %H:%M:%S")
+        except Exception:
+            return str(t)
+    ts_labels = [_fmt(t) for t in win_centres]
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=win_centres, y=nums, mode="markers",
-        marker=dict(color=[state_colors.get(s, "#888") for s in smoothed_states], size=5, symbol="square"),
+        x=x, y=nums, mode="markers",
+        marker=dict(color=[state_colors.get(s, "#888") for s in smoothed_states],
+                    size=7, symbol="square"),
         text=[state_labels.get(s, s) for s in smoothed_states],
-        hovertemplate="%{text}<extra></extra>",
+        customdata=ts_labels,
+        hovertemplate="%{text}<br>%{customdata}<extra></extra>",
     ))
-    if current_idx is not None and current_idx < len(win_centres):
-        fig.add_vline(x=str(win_centres[current_idx]), line_color="white",
+    if current_idx is not None and current_idx < n:
+        fig.add_vline(x=current_idx, line_color="white",
                       line_width=1.5, line_dash="dot")
+
+    # Sparse real-time tick labels along the sequence axis.
+    if n > 1:
+        k = min(8, n)
+        idxs = [int(round(i)) for i in np.linspace(0, n - 1, k)]
+        xaxis = dict(title="Window sequence (time →)",
+                     tickvals=idxs, ticktext=[ts_labels[i] for i in idxs],
+                     tickangle=0)
+    else:
+        xaxis = dict(title="Window sequence (time →)")
+
     fig.update_layout(
         title="State Timeline",
-        xaxis_title="Time",
+        xaxis=xaxis,
         yaxis=dict(tickvals=[0, 1, 2],
                    ticktext=["🔴 " + state_labels.get(RED, "Idle"),
                              "🟡 " + state_labels.get(AMBER, "No Load"),
@@ -532,45 +671,18 @@ def page_validation():
     _machine_header(m)
     st.markdown("## Data Validation")
 
-    # ── File upload ────────────────────────────────────────────────────
+    # ── Auto-load bundled data (no upload required) ────────────────────
+    # Selecting the machine in the sidebar is enough — its CSV(s) are read
+    # straight from the data/ directory and the pipeline runs end-to-end.
+    if not ensure_data_loaded(m):
+        return
+
     if m == "conveyer":
         st.caption(
-            "Upload **both** MV Conveyer CSV files: "
-            "`Stop_and_Run_MV_Conveyer.csv` (reference) "
-            "and `Cyclic_Run_MV_Conveyer.csv` (operational data)."
+            "Loaded both MV Conveyer files automatically — "
+            "`Stop_and_Run_MV_Conveyer.csv` (reference) + "
+            "`Cyclic_Run_MV_Conveyer.csv` (operational)."
         )
-        uploaded_files = st.file_uploader(
-            "Upload CSV files (select both)", type=["csv"], accept_multiple_files=True
-        )
-        if not uploaded_files:
-            return
-        file_key = "|".join(sorted(f.name for f in uploaded_files))
-        if ss("df") is None or ss("last_file") != file_key:
-            with st.spinner("Loading data…"):
-                # Combined df for validation + ML lookback context
-                df_combined = meta["load_data"](uploaded_files)
-                ss_set("df", df_combined)
-                ss_set("last_file", file_key)
-                ss_invalidate()
-                # Cyclic-only df for RAG visualisation
-                df_cyclic = None
-                for f in uploaded_files:
-                    if "cyclic" in f.name.lower():
-                        f.seek(0)
-                        df_cyclic = meta["load_data"](f)
-                        break
-                ss_set("df_cyclic", df_cyclic)
-    else:
-        uploaded = st.file_uploader("Upload CSV", type=["csv"])
-        if uploaded is None:
-            st.caption(f"Upload the {meta['label']} CSV file to begin.")
-            return
-        if ss("df") is None or ss("last_file") != uploaded.name:
-            with st.spinner("Loading data…"):
-                df = meta["load_data"](uploaded)
-            ss_set("df", df)
-            ss_set("last_file", uploaded.name)
-            ss_invalidate()
 
     df = ss("df")
 
@@ -587,7 +699,11 @@ def page_validation():
     st.markdown('<div class="section-label">Time Range</div>', unsafe_allow_html=True)
     n_hours = max(1, int(len(df) / (sr * 3600)))
     default_h = min(4, n_hours)
-    h_range = st.slider("Hours to analyse (from start)", 1, n_hours, default_h)
+    if n_hours > 1:
+        h_range = st.slider("Hours to analyse (from start)", 1, n_hours, default_h)
+    else:
+        h_range = 1
+        st.caption("Dataset spans ≤ 1 hour — analysing the full session.")
     df_view = df.iloc[: int(h_range * sr * 3600)]
 
     # Raw time-series
@@ -608,12 +724,18 @@ def page_validation():
     else:
         rag_view = df_view
 
-    # Run pipeline button
-    if ss("windows_proc") is None:
-        if st.button("🔍  Run Validation Analysis", type="primary"):
-            run_pipeline(rag_view)
-            st.rerun()
-        return
+    # ── Auto-run the pipeline end-to-end (no button) ───────────────────
+    # Re-runs automatically whenever the selected time range, window size or
+    # thresholds change (ss_invalidate / a new range signature clears results).
+    rag_sig = (
+        len(rag_view),
+        str(rag_view["timestamp"].iloc[0]) if len(rag_view) else "",
+        str(rag_view["timestamp"].iloc[-1]) if len(rag_view) else "",
+    )
+    if ss("windows_proc") is None or st.session_state[m].get("last_rag_sig") != rag_sig:
+        run_pipeline(rag_view)
+        ss_set("last_rag_sig", rag_sig)
+        st.rerun()
 
     # Results
     windows_proc = ss("windows_proc")
@@ -937,6 +1059,10 @@ def page_rag():
     _machine_header(m)
     st.markdown("## RAG State Analysis")
 
+    # Auto-load bundled data so this page works even if opened first.
+    if not ensure_data_loaded(m):
+        return
+
     # ── Conveyer: per-sample classification (no window pipeline needed) ──
     # The conveyer cycle is ~15s (11s ON + 4s OFF). Any window > ~3s
     # averages across ON and OFF, pulling RMS above the GREEN threshold
@@ -944,24 +1070,16 @@ def page_rag():
     if m == "conveyer":
         df_cyc = ss("df_cyclic")
         if df_cyc is None:
-            st.warning(
-                "No cyclic data loaded. Go to **Data Validation** and upload "
-                "both CSV files (make sure one filename contains 'cyclic')."
-            )
-            if st.button("← Back to Data Validation"):
-                st.session_state.current_page = "validation"
-                st.rerun()
+            st.warning("No cyclic data available for the conveyer.")
             return
         _page_rag_conveyer(df_cyc, sc, sl, meta)
         return
 
-    # ── Furnace: window-based pipeline required ────────────────────────
+    # ── Window-based machines: ensure the pipeline has been run ────────
     if ss("smoothed_states") is None:
-        st.warning("No processed data found. Please complete Page 1 first.")
-        if st.button("← Back to Data Validation"):
-            st.session_state.current_page = "validation"
-            st.rerun()
-        return
+        with st.spinner("Running analysis pipeline…"):
+            run_pipeline(_default_analysis_view(m, ss("df")))
+        st.rerun()
 
     df = ss("df")
     windows_proc    = ss("windows_proc")
@@ -1113,49 +1231,23 @@ def page_rag():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def page_ml():
-    """ML Diagnostics page — routes to furnace, conveyer, or robo ML based on machine."""
+    """ML Diagnostics page — routes to furnace, conveyer, robo or milling ML."""
     m = st.session_state.current_machine
+    _machine_header(m)
+
+    # Data is auto-loaded from the data/ directory — no upload step.
+    if not ensure_data_loaded(m):
+        return
+    df = ss("df")
 
     if m == "conveyer":
-        _machine_header("conveyer")
-        df = ss("df")
-        if df is None:
-            st.warning(
-                "No data loaded yet. Go to **Data Validation** first, "
-                "upload both conveyer CSV files, then return here."
-            )
-            if st.button("← Go to Data Validation"):
-                st.session_state.current_page = "validation"
-                st.rerun()
-            return
-        df_cyclic = ss("df_cyclic")
         # Pass combined df (for lookback context) + cyclic df (labels/training target)
-        render_mvc_ml_page(df, cyclic_df=df_cyclic)
+        render_mvc_ml_page(df, cyclic_df=ss("df_cyclic"))
     elif m == "robo":
-        _machine_header("robo")
-        df = ss("df")
-        if df is None:
-            st.warning(
-                "No data loaded yet. Go to **Data Validation** first, "
-                "upload the robot CSV, then return here."
-            )
-            if st.button("← Go to Data Validation"):
-                st.session_state.current_page = "validation"
-                st.rerun()
-            return
         render_robo_ml_page(df)
+    elif m == "milling":
+        render_mill_ml_page(df)
     else:
-        _machine_header("furnace")
-        df = ss("df")
-        if df is None:
-            st.warning(
-                "No data loaded yet. Go to **Data Validation** first, "
-                "upload the furnace CSV, then return here."
-            )
-            if st.button("← Go to Data Validation"):
-                st.session_state.current_page = "validation"
-                st.rerun()
-            return
         render_ml_page(df)
 
 
